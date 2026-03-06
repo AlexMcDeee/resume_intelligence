@@ -1,0 +1,1560 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resume Intelligence System</title>
+<script src="https://apis.google.com/js/api.js"></script>
+<script src="https://accounts.google.com/gsi/client"></script>
+<script src="https://cdn.jsdelivr.net/npm/docx@8.5.0/build/index.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,wght@0,300;0,400;0,700;1,300;1,400&family=Epilogue:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --ink: #1a1814;
+  --paper: #f5f0e8;
+  --cream: #ede8dc;
+  --gold: #c4963a;
+  --gold-light: #e8b84b;
+  --rust: #a63d2f;
+  --sage: #4a6741;
+  --muted: #8a8278;
+  --border: #d4cfc4;
+  --surface: #ffffff;
+  --shadow: rgba(26,24,20,0.12);
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: 'Epilogue', sans-serif;
+  min-height: 100vh;
+  position: relative;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23c4963a' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.6;
+}
+
+/* ── Layout ── */
+.app { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 0 24px 80px; }
+
+/* ── Header ── */
+.header {
+  padding: 48px 0 36px;
+  border-bottom: 2px solid var(--ink);
+  margin-bottom: 48px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 24px;
+}
+
+.header-brand h1 {
+  font-family: 'Fraunces', serif;
+  font-weight: 700;
+  font-size: clamp(32px, 5vw, 56px);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  color: var(--ink);
+}
+
+.header-brand h1 em {
+  font-style: italic;
+  color: var(--gold);
+}
+
+.header-brand p {
+  margin-top: 10px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.header-actions { display: flex; gap: 10px; align-items: center; }
+
+/* ── Buttons ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: 'Epilogue', sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border-radius: 4px;
+  padding: 10px 20px;
+  cursor: pointer;
+  transition: all 0.18s;
+  border: none;
+  text-decoration: none;
+}
+
+.btn-primary {
+  background: var(--ink);
+  color: var(--paper);
+}
+.btn-primary:hover { background: #2d2a24; transform: translateY(-1px); box-shadow: 0 4px 12px var(--shadow); }
+
+.btn-gold {
+  background: var(--gold);
+  color: white;
+}
+.btn-gold:hover { background: var(--gold-light); transform: translateY(-1px); }
+
+.btn-outline {
+  background: transparent;
+  color: var(--ink);
+  border: 1.5px solid var(--border);
+}
+.btn-outline:hover { border-color: var(--ink); }
+
+.btn-danger {
+  background: var(--rust);
+  color: white;
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+}
+
+.btn .spinner {
+  width: 14px; height: 14px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: white;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: none;
+}
+.btn.loading .spinner { display: block; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ── Settings Modal ── */
+.modal-overlay {
+  position: fixed; inset: 0;
+  background: rgba(26,24,20,0.6);
+  z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  backdrop-filter: blur(4px);
+}
+.modal-overlay.hidden { display: none; }
+
+.modal {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 12px;
+  padding: 40px;
+  width: 100%;
+  max-width: 560px;
+  box-shadow: 0 24px 64px var(--shadow);
+}
+
+.modal h2 {
+  font-family: 'Fraunces', serif;
+  font-size: 26px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.modal p.subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin-bottom: 28px;
+  line-height: 1.5;
+}
+
+.field { margin-bottom: 18px; }
+.field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.field input {
+  width: 100%;
+  background: var(--paper);
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'Epilogue', monospace;
+  font-size: 13px;
+  padding: 10px 14px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.field input:focus { border-color: var(--gold); }
+.field input::placeholder { color: var(--muted); opacity: 0.6; }
+
+.field .hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 5px;
+  line-height: 1.4;
+}
+
+/* ── Section Cards ── */
+.section-card {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+
+.section-card-header {
+  padding: 20px 28px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--cream);
+}
+
+.section-card-header .label {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.step-num {
+  width: 28px; height: 28px;
+  border-radius: 50%;
+  background: var(--ink);
+  color: var(--paper);
+  font-family: 'Fraunces', serif;
+  font-size: 14px;
+  font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+
+.section-title {
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.section-sub {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+.section-card-body { padding: 28px; }
+
+/* ── Job Description ── */
+textarea {
+  width: 100%;
+  background: var(--paper);
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink);
+  font-family: 'Epilogue', sans-serif;
+  font-size: 13px;
+  line-height: 1.7;
+  padding: 16px;
+  resize: vertical;
+  outline: none;
+  transition: border-color 0.2s;
+}
+textarea:focus { border-color: var(--gold); }
+textarea::placeholder { color: var(--muted); }
+
+/* ── Google Connect ── */
+.connect-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 32px;
+  text-align: center;
+}
+
+.connect-area .icon { font-size: 40px; opacity: 0.3; }
+.connect-area p { font-size: 13px; color: var(--muted); max-width: 380px; line-height: 1.6; }
+
+.connected-state { display: none; }
+.connected-state.visible { display: block; }
+
+.file-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.file-chip {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--paper);
+  border: 1.5px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+  transition: border-color 0.2s;
+}
+
+.file-chip.selected { border-color: var(--sage); background: rgba(74,103,65,0.06); }
+.file-chip .file-icon { font-size: 18px; flex-shrink: 0; }
+.file-chip .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; }
+.file-chip .check { color: var(--sage); font-size: 14px; display: none; }
+.file-chip.selected .check { display: block; }
+
+.sheets-preview {
+  background: var(--paper);
+  border: 1.5px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.sheets-preview table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.sheets-preview th {
+  background: var(--cream);
+  padding: 8px 12px;
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+
+.sheets-preview td {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--ink);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sheets-preview tr:last-child td { border-bottom: none; }
+.sheets-preview tr:hover td { background: var(--cream); }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.badge-green { background: rgba(74,103,65,0.12); color: var(--sage); }
+.badge-gold { background: rgba(196,150,58,0.15); color: var(--gold); }
+.badge-red { background: rgba(166,61,47,0.12); color: var(--rust); }
+.badge-gray { background: var(--cream); color: var(--muted); }
+
+/* ── Run Button ── */
+.run-section {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 40px 0;
+}
+
+.run-btn {
+  font-size: 15px !important;
+  padding: 18px 48px !important;
+  letter-spacing: 0.08em !important;
+  box-shadow: 0 4px 20px rgba(196,150,58,0.3);
+}
+
+/* ── Results ── */
+.results-section { margin-top: 16px; }
+
+.result-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 40px 0 28px;
+}
+
+.result-divider span {
+  font-family: 'Fraunces', serif;
+  font-size: 22px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.result-divider::before,
+.result-divider::after {
+  content: '';
+  flex: 1;
+  height: 1.5px;
+  background: var(--border);
+}
+
+/* Score cards */
+.score-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 14px;
+  margin-bottom: 24px;
+}
+
+.score-card {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  padding: 20px 24px;
+  position: relative;
+  transition: box-shadow 0.2s;
+}
+
+.score-card.best-match {
+  border-color: var(--gold);
+  box-shadow: 0 0 0 3px rgba(196,150,58,0.15);
+}
+
+.score-card .best-label {
+  position: absolute;
+  top: -1px; right: 16px;
+  background: var(--gold);
+  color: white;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 0 0 6px 6px;
+}
+
+.score-card .resume-title {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+  padding-right: 60px;
+  line-height: 1.3;
+}
+
+.score-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.score-bar {
+  flex: 1;
+  height: 5px;
+  background: var(--cream);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.score-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+  background: var(--muted);
+}
+
+.score-card.best-match .score-bar-fill { background: var(--gold); }
+
+.score-num {
+  font-family: 'Fraunces', serif;
+  font-size: 24px;
+  font-weight: 700;
+  min-width: 48px;
+  text-align: right;
+  color: var(--muted);
+}
+
+.score-card.best-match .score-num { color: var(--gold); }
+
+.score-summary {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.5;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+}
+
+/* Threshold banner */
+.threshold-banner {
+  border-radius: 8px;
+  padding: 16px 22px;
+  font-size: 13px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.threshold-banner.pass { background: rgba(74,103,65,0.1); border: 1.5px solid var(--sage); color: var(--sage); }
+.threshold-banner.fail { background: rgba(166,61,47,0.08); border: 1.5px solid var(--rust); color: var(--rust); }
+
+/* Full ATS report */
+.ats-report {
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 24px;
+}
+
+.ats-report-header {
+  background: var(--cream);
+  border-bottom: 1.5px solid var(--border);
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ats-report-header h3 {
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.ats-report-body {
+  padding: 28px;
+  font-size: 13px;
+  line-height: 1.8;
+  color: var(--ink);
+  white-space: pre-wrap;
+  font-family: 'Epilogue', sans-serif;
+  max-height: 500px;
+  overflow-y: auto;
+}
+
+/* Generated Resume */
+.generated-resume {
+  background: var(--surface);
+  border: 2px solid var(--ink);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.generated-resume-header {
+  background: var(--ink);
+  padding: 18px 28px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.generated-resume-header h3 {
+  font-family: 'Fraunces', serif;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--paper);
+  font-style: italic;
+}
+
+.generated-resume-body {
+  padding: 36px 40px;
+  font-size: 13px;
+  line-height: 1.9;
+  color: var(--ink);
+  white-space: pre-wrap;
+  font-family: 'Epilogue', sans-serif;
+  max-height: 700px;
+  overflow-y: auto;
+}
+
+/* Status messages */
+.status-log {
+  background: var(--ink);
+  color: var(--paper);
+  border-radius: 8px;
+  padding: 20px 24px;
+  font-family: monospace;
+  font-size: 12px;
+  line-height: 1.8;
+  margin-bottom: 24px;
+}
+
+.status-log .log-line { opacity: 0.7; }
+.status-log .log-line.active { opacity: 1; color: var(--gold-light); }
+.status-log .log-line.done { opacity: 1; color: #6bde9b; }
+.status-log .log-line.error { color: #f08080; opacity: 1; }
+
+.hidden { display: none !important; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+@media (max-width: 700px) {
+  .header { flex-direction: column; align-items: flex-start; }
+  .score-grid { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal">
+  <div class="modal">
+    <h2>Configure System</h2>
+    <p class="subtitle">Your settings are saved locally in your browser only. Your API key is never sent anywhere except directly to Anthropic.</p>
+
+    <div class="field">
+      <label>Anthropic API Key</label>
+      <input type="password" id="cfg-anthropic" placeholder="sk-ant-..." autocomplete="off">
+      <div class="hint">Get from console.anthropic.com → API Keys</div>
+    </div>
+
+    <div class="field">
+      <label>Google OAuth Client ID</label>
+      <input type="text" id="cfg-oauth" placeholder="xxxx.apps.googleusercontent.com" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label>Google Drive Folder ID</label>
+      <input type="text" id="cfg-folder" placeholder="1blnVaR5..." autocomplete="off">
+      <div class="hint">The string after /folders/ in your Drive URL</div>
+    </div>
+
+    <div class="field">
+      <label>Google Sheets ID</label>
+      <input type="text" id="cfg-sheets" placeholder="1rqBgt_0..." autocomplete="off">
+      <div class="hint">The string between /d/ and /edit in your Sheets URL</div>
+    </div>
+
+    <div style="display:flex; gap:10px; margin-top:8px;">
+      <button class="btn btn-primary" onclick="saveSettings()" style="flex:1;">Save & Continue</button>
+      <button class="btn btn-outline" onclick="closeSettingsIfConfigured()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<div class="app">
+
+  <!-- Header -->
+  <header class="header">
+    <div class="header-brand">
+      <h1>Resume<br><em>Intelligence</em></h1>
+      <p>ATS Scoring · Gap Analysis · Strategic Refactor</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-outline" onclick="openSettings()">⚙ Settings</button>
+      <button class="btn btn-primary" id="googleSignInBtn" onclick="signInGoogle()">Connect Google</button>
+      <button class="btn btn-outline hidden" id="googleSignOutBtn" onclick="signOutGoogle()">Sign Out</button>
+    </div>
+  </header>
+
+  <!-- Step 1: Job Description -->
+  <div class="section-card">
+    <div class="section-card-header">
+      <div class="label">
+        <div class="step-num">1</div>
+        <div>
+          <div class="section-title">Job Description</div>
+          <div class="section-sub">Paste the full JD — requirements, responsibilities, qualifications</div>
+        </div>
+      </div>
+    </div>
+    <div class="section-card-body">
+      <textarea id="jobDesc" rows="10" placeholder="Paste the complete job description here. Include all sections: About the Role, Requirements, Responsibilities, Nice-to-Haves, and any technology stack mentions. The more complete the JD, the more accurate the ATS scoring."></textarea>
+    </div>
+  </div>
+
+  <!-- Step 2: Resumes from Google Drive -->
+  <div class="section-card">
+    <div class="section-card-header">
+      <div class="label">
+        <div class="step-num">2</div>
+        <div>
+          <div class="section-title">Resume Pool</div>
+          <div class="section-sub">Loaded from your Google Drive folder</div>
+        </div>
+      </div>
+      <button class="btn btn-outline" id="refreshDriveBtn" onclick="loadDriveFiles()" style="display:none;">↻ Refresh</button>
+    </div>
+    <div class="section-card-body">
+      <!-- Not connected -->
+      <div class="connect-area" id="driveConnectPrompt">
+        <div class="icon">📁</div>
+        <p>Connect your Google account to load resumes directly from your Drive folder.</p>
+        <button class="btn btn-primary" onclick="signInGoogle()">Connect Google Drive</button>
+      </div>
+
+      <!-- Connected -->
+      <div class="connected-state" id="driveConnected">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <span class="badge badge-green">✓ Drive Connected</span>
+          <span id="fileCountLabel" style="font-size:12px; color:var(--muted);"></span>
+        </div>
+        <div class="file-grid" id="fileGrid"></div>
+        <p style="font-size:11px; color:var(--muted); margin-top:12px;">Click files to select/deselect. All selected by default.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 3: Career Achievements from Sheets -->
+  <div class="section-card">
+    <div class="section-card-header">
+      <div class="label">
+        <div class="step-num">3</div>
+        <div>
+          <div class="section-title">Career Achievements Database</div>
+          <div class="section-sub">Loaded from your Google Sheets</div>
+        </div>
+      </div>
+      <button class="btn btn-outline" id="refreshSheetsBtn" onclick="loadSheets()" style="display:none;">↻ Refresh</button>
+    </div>
+    <div class="section-card-body">
+      <div class="connect-area" id="sheetsConnectPrompt">
+        <div class="icon">📊</div>
+        <p>Connect your Google account to load career achievements from your Sheets database.</p>
+        <button class="btn btn-primary" onclick="signInGoogle()">Connect Google Sheets</button>
+      </div>
+
+      <div class="connected-state" id="sheetsConnected">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <span class="badge badge-green">✓ Sheets Connected</span>
+          <span id="achievementCountLabel" style="font-size:12px; color:var(--muted);"></span>
+        </div>
+        <div class="sheets-preview" id="sheetsPreview"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Run -->
+  <div class="run-section">
+    <button class="btn btn-gold run-btn" id="runBtn" onclick="runPipeline()">
+      <div class="spinner"></div>
+      <span class="btn-text">⚡ Run ATS Evaluation</span>
+    </button>
+  </div>
+
+  <!-- Results -->
+  <div class="results-section hidden" id="resultsSection">
+
+    <div class="result-divider"><span>Evaluation Results</span></div>
+
+    <!-- Status Log -->
+    <div class="status-log" id="statusLog"></div>
+
+    <!-- Score Cards -->
+    <div id="scoreGrid" class="score-grid"></div>
+
+    <!-- Threshold Banner -->
+    <div id="thresholdBanner" class="threshold-banner hidden"></div>
+
+    <!-- Full ATS Report (best resume) -->
+    <div class="ats-report hidden" id="atsReportCard">
+      <div class="ats-report-header">
+        <h3>Full ATS Analysis — <span id="atsReportName"></span></h3>
+        <button class="btn btn-outline" onclick="copyText('atsReportBody')">Copy Report</button>
+      </div>
+      <div class="ats-report-body" id="atsReportBody"></div>
+    </div>
+
+    <!-- Generated Resume -->
+    <div class="generated-resume hidden" id="generatedResumeCard">
+      <div class="generated-resume-header">
+        <h3>✦ Strategically Refactored Resume</h3>
+        <button class="btn btn-outline" onclick="copyText('generatedResumeBody')" style="color:var(--paper);border-color:rgba(255,255,255,0.3);">Copy Text</button>
+      </div>
+      <div class="generated-resume-body" id="generatedResumeBody"></div>
+      <div style="padding: 0 28px 28px; display:flex; gap:12px;">
+        <button class="btn btn-gold" id="downloadDocxBtn" onclick="downloadAsDocx()">⬇ Download as Word Doc</button>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<script>
+// ─── Config ───────────────────────────────────────────────────────────────────
+const HARDCODED = {
+  folderId: '1blnVaR5QnNHzLe6y8wNWqV_hher0VDPf',
+  sheetsId: '1rqBgt_0IVMMnc0xgzf7Gx0oMTD1nIPJIlSxuBcLC0ks',
+  oauthClientId: '568170305764-o0htifoei7egl740u4v9gvk92t5on8nu.apps.googleusercontent.com'
+};
+
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets.readonly';
+const SCORE_THRESHOLD = 75;
+
+let tokenClient = null;
+let accessToken = null;
+let driveFiles = []; // { id, name, selected, content }
+let achievements = [];
+let isGapiReady = false;
+
+// ─── Settings ─────────────────────────────────────────────────────────────────
+function loadSettings() {
+  return {
+    anthropicKey: localStorage.getItem('ris_anthropic') || '',
+    oauthClientId: localStorage.getItem('ris_oauth') || HARDCODED.oauthClientId,
+    folderId: localStorage.getItem('ris_folder') || HARDCODED.folderId,
+    sheetsId: localStorage.getItem('ris_sheets') || HARDCODED.sheetsId,
+  };
+}
+
+function saveSettings() {
+  const key = document.getElementById('cfg-anthropic').value.trim();
+  const oauth = document.getElementById('cfg-oauth').value.trim();
+  const folder = document.getElementById('cfg-folder').value.trim();
+  const sheets = document.getElementById('cfg-sheets').value.trim();
+  if (!key) { alert('Anthropic API key is required.'); return; }
+  localStorage.setItem('ris_anthropic', key);
+  if (oauth) localStorage.setItem('ris_oauth', oauth);
+  if (folder) localStorage.setItem('ris_folder', folder);
+  if (sheets) localStorage.setItem('ris_sheets', sheets);
+  document.getElementById('settingsModal').classList.add('hidden');
+  waitForGoogle(() => initGoogleAuth());
+}
+
+function openSettings() {
+  const s = loadSettings();
+  document.getElementById('cfg-anthropic').value = s.anthropicKey;
+  document.getElementById('cfg-oauth').value = s.oauthClientId;
+  document.getElementById('cfg-folder').value = s.folderId;
+  document.getElementById('cfg-sheets').value = s.sheetsId;
+  document.getElementById('settingsModal').classList.remove('hidden');
+}
+
+function closeSettingsIfConfigured() {
+  const s = loadSettings();
+  if (s.anthropicKey) document.getElementById('settingsModal').classList.add('hidden');
+}
+
+// ─── Google Auth ──────────────────────────────────────────────────────────────
+function initGoogleAuth() {
+  const s = loadSettings();
+  const clientId = s.oauthClientId || HARDCODED.oauthClientId;
+
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: clientId,
+    scope: SCOPES,
+    callback: async (resp) => {
+      if (resp.error) { console.error(resp); return; }
+      accessToken = resp.access_token;
+      onGoogleConnected();
+    }
+  });
+}
+
+function signInGoogle() {
+  const s = loadSettings();
+  if (!s.anthropicKey) { openSettings(); return; }
+  if (!tokenClient) initGoogleAuth();
+  tokenClient.requestAccessToken({ prompt: 'consent' });
+}
+
+function signOutGoogle() {
+  if (accessToken) google.accounts.oauth2.revoke(accessToken);
+  accessToken = null;
+  document.getElementById('googleSignInBtn').classList.remove('hidden');
+  document.getElementById('googleSignOutBtn').classList.add('hidden');
+  document.getElementById('driveConnectPrompt').style.display = 'flex';
+  document.getElementById('driveConnected').classList.remove('visible');
+  document.getElementById('sheetsConnectPrompt').style.display = 'flex';
+  document.getElementById('sheetsConnected').classList.remove('visible');
+  document.getElementById('refreshDriveBtn').style.display = 'none';
+  document.getElementById('refreshSheetsBtn').style.display = 'none';
+  driveFiles = [];
+  achievements = [];
+}
+
+async function onGoogleConnected() {
+  document.getElementById('googleSignInBtn').classList.add('hidden');
+  document.getElementById('googleSignOutBtn').classList.remove('hidden');
+  await loadDriveFiles();
+  await loadSheets();
+}
+
+// ─── Drive ────────────────────────────────────────────────────────────────────
+async function loadDriveFiles() {
+  const s = loadSettings();
+  const folderId = s.folderId || HARDCODED.folderId;
+  document.getElementById('driveConnectPrompt').style.display = 'none';
+  document.getElementById('driveConnected').classList.add('visible');
+  document.getElementById('refreshDriveBtn').style.display = 'inline-flex';
+  document.getElementById('fileGrid').innerHTML = '<span style="font-size:12px;color:var(--muted);">Loading files...</span>';
+
+  try {
+    const resp = await gFetch(`https://www.googleapis.com/drive/v3/files?q='${folderId}'+in+parents+and+trashed=false&fields=files(id,name,mimeType,size)&pageSize=50`);
+    const files = resp.files || [];
+    driveFiles = files.map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, selected: true, content: null }));
+    document.getElementById('fileCountLabel').textContent = `${files.length} file${files.length !== 1 ? 's' : ''} found`;
+    renderFileGrid();
+  } catch (e) {
+    document.getElementById('fileGrid').innerHTML = `<span style="color:var(--rust);font-size:12px;">Error loading files: ${e.message}</span>`;
+  }
+}
+
+function renderFileGrid() {
+  const grid = document.getElementById('fileGrid');
+  grid.innerHTML = '';
+  driveFiles.forEach((f, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'file-chip' + (f.selected ? ' selected' : '');
+    chip.innerHTML = `<span class="file-icon">📄</span><span class="file-name" title="${f.name}">${f.name}</span><span class="check">✓</span>`;
+    chip.onclick = () => { driveFiles[i].selected = !driveFiles[i].selected; renderFileGrid(); };
+    grid.appendChild(chip);
+  });
+}
+
+async function fetchFileContent(fileId, mimeType) {
+  let url;
+  if (mimeType === 'application/vnd.google-apps.document') {
+    url = `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=text/plain`;
+  } else {
+    url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
+  }
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!resp.ok) throw new Error(`Failed to fetch file: ${resp.status}`);
+  return await resp.text();
+}
+
+// ─── Sheets ───────────────────────────────────────────────────────────────────
+async function loadSheets() {
+  const s = loadSettings();
+  const sheetsId = s.sheetsId || HARDCODED.sheetsId;
+  document.getElementById('sheetsConnectPrompt').style.display = 'none';
+  document.getElementById('sheetsConnected').classList.add('visible');
+  document.getElementById('refreshSheetsBtn').style.display = 'inline-flex';
+  document.getElementById('sheetsPreview').innerHTML = '<span style="font-size:12px;color:var(--muted);padding:16px;display:block;">Loading achievements database...</span>';
+
+  try {
+    // Load Achievements sheet
+    const achResp = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetsId}/values/Achievements!A:M`);
+    const achRows = achResp.values || [];
+
+    // Load Skills sheet
+    let skills = [];
+    try {
+      const skillResp = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetsId}/values/Skills!A:B`);
+      const skillRows = skillResp.values || [];
+      skills = skillRows.slice(1).filter(r => r[0]).map(r => ({ skill: r[0] || '', category: r[1] || '' }));
+    } catch(e) { console.warn('Skills sheet load failed:', e); }
+
+    // Load Partnerships sheet
+    let partnerships = [];
+    try {
+      const partResp = await gFetch(`https://sheets.googleapis.com/v4/spreadsheets/${sheetsId}/values/Partnerships!A:H`);
+      const partRows = partResp.values || [];
+      partnerships = partRows.slice(1).filter(r => r[1]).map(r => ({
+        id: r[0] || '', organization: r[1] || '', partnerType: r[2] || '',
+        industry: r[3] || '', relationship: r[4] || '', geography: r[5] || '',
+        notes: r[6] || '', signal: r[7] || ''
+      }));
+    } catch(e) { console.warn('Partnerships sheet load failed:', e); }
+
+    if (achRows.length < 2) {
+      achievements = [];
+      document.getElementById('sheetsPreview').innerHTML = '<p style="padding:16px;font-size:12px;color:var(--muted);">No data found in Achievements sheet.</p>';
+      return;
+    }
+
+    const headers = achRows[0];
+    const col = (name) => headers.findIndex(h => h && h.trim().toLowerCase() === name.toLowerCase());
+
+    // Map all rows, filter to only rows with actual bullet content
+    const allAch = achRows.slice(1).filter(r => r.some(c => c)).map(row => {
+      const get = (name) => { const i = col(name); return (i >= 0 && row[i]) ? row[i] : ''; };
+      return {
+        organization: get('Organization'),
+        title: get('Title/Label'),
+        bullet: get('Bullet'),
+        metrics: get('Impact/Metrics'),
+        problem: get('Problem'),
+        action: get('Action'),
+        stakeholders: get('Stakeholders'),
+        tools: get('Tools/Tech'),
+        capabilities: get('Capability Themes'),
+        domain: get('Domain Themes'),
+        keywords: get('Keywords'),
+        signal: get('Signal Strength'),
+        anchor: get('Anchor')
+      };
+    }).filter(a => a.bullet || a.title);
+
+    // Store globally with skills and partnerships attached
+    achievements = allAch;
+    window.skillsDB = skills;
+    window.partnershipsDB = partnerships;
+
+    const tier1 = allAch.filter(a => a.signal === 'Tier 1').length;
+    const tier2 = allAch.filter(a => a.signal === 'Tier 2').length;
+    const tier3 = allAch.filter(a => a.signal === 'Tier 3').length;
+
+    document.getElementById('achievementCountLabel').textContent =
+      `${allAch.length} achievements (T1:${tier1} T2:${tier2} T3:${tier3}) · ${skills.length} skills · ${partnerships.length} partnerships`;
+
+    // Preview table
+    const previewHeaders = ['Organization', 'Title/Label', 'Bullet', 'Impact/Metrics', 'Signal Strength'];
+    const previewRows = achRows.slice(1, 6);
+    renderSheetsPreview(previewHeaders, previewRows);
+
+  } catch (e) {
+    document.getElementById('sheetsPreview').innerHTML = `<p style="padding:16px;font-size:12px;color:var(--rust);">Error loading sheets: ${e.message}</p>`;
+    console.error(e);
+  }
+}
+
+function renderSheetsPreview(headers, rows) {
+  const preview = document.getElementById('sheetsPreview');
+  let html = '<table><thead><tr>' + headers.map(h => `<th>${h}</th>`).join('') + '</tr></thead><tbody>';
+  rows.forEach(row => {
+    html += '<tr>' + headers.map((_, i) => `<td title="${row[i] || ''}">${(row[i] || '').slice(0, 40)}${(row[i] || '').length > 40 ? '…' : ''}</td>`).join('') + '</tr>';
+  });
+  html += '</tbody></table>';
+  preview.innerHTML = html;
+}
+
+// ─── Google Fetch Helper ──────────────────────────────────────────────────────
+async function gFetch(url) {
+  const resp = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `HTTP ${resp.status}`);
+  }
+  return resp.json();
+}
+
+// ─── Pipeline ─────────────────────────────────────────────────────────────────
+async function runPipeline() {
+  const jd = document.getElementById('jobDesc').value.trim();
+  if (!jd) { alert('Paste a job description first.'); return; }
+  const selected = driveFiles.filter(f => f.selected);
+  if (selected.length === 0) { alert('Select at least one resume from Drive.'); return; }
+  if (achievements.length === 0) { alert('No career achievements loaded from Sheets.'); return; }
+
+  const s = loadSettings();
+  if (!s.anthropicKey) { openSettings(); return; }
+
+  const btn = document.getElementById('runBtn');
+  btn.classList.add('loading');
+  btn.disabled = true;
+
+  document.getElementById('resultsSection').classList.remove('hidden');
+  document.getElementById('scoreGrid').innerHTML = '';
+  document.getElementById('thresholdBanner').classList.add('hidden');
+  document.getElementById('atsReportCard').classList.add('hidden');
+  document.getElementById('generatedResumeCard').classList.add('hidden');
+  document.getElementById('statusLog').innerHTML = '';
+
+  try {
+    // Step 1: Fetch file contents
+    log('active', '⟳ Fetching resume files from Google Drive...');
+    const loaded = [];
+    for (const f of selected) {
+      log('active', `  ↳ Reading: ${f.name}`);
+      try {
+        const content = await fetchFileContent(f.id, f.mimeType);
+        loaded.push({ name: f.name, content });
+      } catch (e) {
+        log('error', `  ✗ Could not read ${f.name}: ${e.message}`);
+      }
+    }
+    log('done', `✓ Loaded ${loaded.length} resume(s)`);
+
+    // Step 2: Quick score all resumes
+    log('active', '⟳ Running preliminary scoring on all resumes...');
+    const quickScores = await quickScoreAll(jd, loaded, s.anthropicKey);
+    quickScores.sort((a, b) => b.score - a.score);
+    renderScoreCards(quickScores);
+    log('done', `✓ Scored ${quickScores.length} resume(s). Best: "${quickScores[0].name}" (${quickScores[0].score}/100)`);
+
+    const best = quickScores[0];
+    const bestResume = loaded.find(r => r.name === best.name);
+
+    // Step 3: Threshold check
+    const banner = document.getElementById('thresholdBanner');
+    banner.classList.remove('hidden');
+
+    if (best.score < SCORE_THRESHOLD) {
+      banner.className = 'threshold-banner fail';
+      banner.innerHTML = `✗ Best match "${best.name}" scored ${best.score}/100 — below threshold (${SCORE_THRESHOLD}). No resume generated. Consider expanding your resume pool or targeting a better-aligned role.`;
+      log('error', `✗ Score ${best.score} below threshold ${SCORE_THRESHOLD}. Pipeline stopped.`);
+      btn.classList.remove('loading'); btn.disabled = false;
+      return;
+    }
+
+    banner.className = 'threshold-banner pass';
+    banner.innerHTML = `✓ "${best.name}" scored ${best.score}/100 on initial screen — above threshold. <strong>Note:</strong> The full ATS analysis below uses a stricter rubric and will show the more accurate score.`;
+
+    // Step 4: Full ATS report on best resume
+    log('active', '⟳ Running full ATS analysis on best-matched resume...');
+    const atsReport = await fullATSAnalysis(jd, bestResume.content, s.anthropicKey);
+    document.getElementById('atsReportCard').classList.remove('hidden');
+    document.getElementById('atsReportName').textContent = best.name;
+    document.getElementById('atsReportBody').textContent = atsReport;
+    log('done', '✓ Full ATS analysis complete');
+
+    // Step 5: Generate tailored resume
+    log('active', '⟳ Waiting 60s before resume generation to respect rate limits...');
+    await new Promise(r => setTimeout(r, 60000));
+    log('active', '⟳ Generating strategically refactored resume...');
+    const tailoredResume = await generateResume(jd, bestResume.content, achievements, s.anthropicKey);
+    document.getElementById('generatedResumeCard').classList.remove('hidden');
+    document.getElementById('generatedResumeBody').textContent = tailoredResume;
+    document.getElementById('downloadDocxBtn').style.display = 'inline-flex';
+    window.lastGeneratedResume = tailoredResume;
+    log('done', '✓ Click the gold Download button below the resume to save as Word doc.');
+    log('done', '✓ Resume generation complete. Scroll down to view and download.');
+
+  } catch (e) {
+    log('error', '✗ Error: ' + e.message);
+    console.error(e);
+  }
+
+  btn.classList.remove('loading');
+  btn.disabled = false;
+}
+
+// ─── Claude Calls ─────────────────────────────────────────────────────────────
+async function quickScoreAll(jd, resumes, apiKey) {
+  const batchSize = 2;
+  let allScores = [];
+  for (let i = 0; i < resumes.length; i += batchSize) {
+    const batch = resumes.slice(i, i + batchSize);
+    const prompt = `You are an ATS scoring engine. Score each resume 0-100 against this job description.
+
+Rubric: Titles/Seniority=30pts, Hard Skills=40pts, Years Experience=20pts, Education/Certs=10pts.
+
+JOB DESCRIPTION:
+${jd.slice(0, 1200)}
+
+RESUMES:
+${batch.map((r, idx) => `=== RESUME ${idx + 1}: ${r.name} ===\n${r.content.slice(0, 6000)}`).join('\n\n')}
+
+OUTPUT: A JSON array only. Zero other text, zero markdown, zero explanation.
+[{"name":"exact filename","score":75,"summary":"One sentence fit assessment."}]`;
+
+    const text = await callClaude(prompt, apiKey, 2000);
+    const scores = JSON.parse(cleanJSON(text));
+    allScores = allScores.concat(Array.isArray(scores) ? scores : [scores]);
+  }
+  return allScores;
+}
+
+async function fullATSAnalysis(jd, resumeContent, apiKey) {
+  const prompt = `${ATS_ANALYSIS_PROMPT}
+
+JOB DESCRIPTION:
+${jd.slice(0, 2000)}
+
+RESUME:
+${resumeContent.slice(0, 6000)}`;
+
+  return await callClaude(prompt, apiKey, 3500);
+}
+
+async function generateResume(jd, resumeContent, achievements, apiKey) {
+  // Smart filtering: Tier 1 first, then Tier 2, then keyword-match Tier 3
+  const jdLower = jd.toLowerCase();
+  const tier1 = achievements.filter(a => a.signal === 'Tier 1');
+  const tier2 = achievements.filter(a => a.signal === 'Tier 2');
+  const tier3 = achievements.filter(a => a.signal === 'Tier 3').filter(a => {
+    const text = `${a.keywords} ${a.capabilities} ${a.domain} ${a.bullet}`.toLowerCase();
+    return text.split(/[,\s]+/).some(kw => kw.length > 4 && jdLower.includes(kw));
+  });
+
+  const selected = [...tier1, ...tier2, ...tier3].slice(0, 20);
+
+  const achText = selected.map((a, i) => {
+    const parts = [];
+    if (a.organization) parts.push(`Org: ${a.organization}`);
+    if (a.bullet) parts.push(`Bullet: ${a.bullet}`);
+    if (a.metrics) parts.push(`Metrics: ${a.metrics}`);
+    if (a.action) parts.push(`Action: ${a.action}`);
+    if (a.tools) parts.push(`Tools: ${a.tools}`);
+    if (a.keywords) parts.push(`Keywords: ${a.keywords}`);
+    if (a.signal) parts.push(`Signal: ${a.signal}`);
+    return `[${i + 1}] ${parts.join(' | ')}`;
+  }).join('\n');
+
+  // Skills summary from Skills sheet
+  const skillsText = (window.skillsDB || []).slice(0, 60)
+    .map(s => `${s.skill} (${s.category})`).join(', ');
+
+  const prompt = `${RESUME_REFACTOR_PROMPT}
+
+JOB DESCRIPTION:
+${jd.slice(0, 2000)}
+
+CANDIDATE'S EXISTING RESUME (factual foundation — do not fabricate anything not present here or in the achievements database):
+${resumeContent.slice(0, 6000)}
+
+VERIFIED CAREER ACHIEVEMENTS DATABASE (use these exact bullets — prioritize Tier 1, then Tier 2):
+${achText}
+
+VERIFIED SKILLS (use only from this list for the skills section):
+${skillsText}
+
+CRITICAL RULES:
+1. The existing resume is the SOLE source of truth for: job titles, company names, dates, education, and career structure. Do not change any of these facts.
+2. EDUCATION: You must include the education section exactly as it appears in the resume. Do not omit it.
+3. ALL JOBS: Include every role from the resume. Do not drop any position.
+4. The achievements database is ONLY used to upgrade weak bullet points with stronger phrasing, better metrics, or missing impact data — where the achievement clearly matches the same role/context.
+5. If an achievement from the database does not clearly map to a role already in the resume, do not use it.
+6. Use [Insert Metric] only where the resume itself has an unquantified result and the database has no matching data.
+7. Never invent, assume, or interpolate any fact not present in the resume or database.
+8. If the resume content appears incomplete or truncated, include what you have and note [Resume content truncated - candidate to complete] at the end.`;
+
+  return await callClaude(prompt, apiKey, 3000);
+}
+
+async function callClaude(prompt, apiKey, maxTokens = 1500) {
+  const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Claude API error ${resp.status}`);
+  }
+
+  const data = await resp.json();
+  return data.content.map(b => b.text || '').join('');
+}
+
+function cleanJSON(text) {
+  return text.replace(/```json|```/g, '').trim();
+}
+
+// ─── UI Helpers ───────────────────────────────────────────────────────────────
+function log(type, msg) {
+  const log = document.getElementById('statusLog');
+  const line = document.createElement('div');
+  line.className = 'log-line ' + type;
+  line.textContent = msg;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+function renderScoreCards(scores) {
+  const grid = document.getElementById('scoreGrid');
+  grid.innerHTML = '';
+  scores.forEach((s, i) => {
+    const card = document.createElement('div');
+    card.className = 'score-card' + (i === 0 ? ' best-match' : '');
+    card.innerHTML = `
+      ${i === 0 ? '<div class="best-label">Best Match</div>' : ''}
+      <div class="resume-title">${s.name}</div>
+      <div class="score-row">
+        <div class="score-bar"><div class="score-bar-fill" style="width:0%" data-target="${s.score}"></div></div>
+        <div class="score-num">${s.score}</div>
+      </div>
+      <div class="score-summary">${s.summary || ''}</div>
+    `;
+    grid.appendChild(card);
+  });
+  setTimeout(() => {
+    document.querySelectorAll('.score-bar-fill').forEach(b => { b.style.width = b.dataset.target + '%'; });
+  }, 80);
+}
+
+function copyText(id) {
+  const text = document.getElementById(id).textContent;
+  navigator.clipboard.writeText(text).then(() => {
+    alert('Copied to clipboard!');
+  });
+}
+
+// ─── Prompts ──────────────────────────────────────────────────────────────────
+const ATS_ANALYSIS_PROMPT = `You are a Technical Recruiter and ATS Optimization Consultant. Your expertise lies in how Applicant Tracking Systems parse data and how recruiters make split-second decisions. Provide a clinical, data-driven audit.
+
+SCORING RUBRIC (100 points):
+- Titles & Seniority: 30 pts (Exact match: 30)
+- Mandatory Hard Skills: 40 pts (9+ keywords: 40)
+- Years of Experience: 20 pts (Meets/Exceeds: 20)
+- Education/Certs: 10 pts (Meets all: 10)
+
+EXECUTION PROCESS:
+
+Step 1: Extraction & Contextual Matching
+Identify the Top 10 Mandatory Keywords. Create a table:
+Keyword | Found in Resume? (Yes/No/Synonym) | Location (Recent/Past/None) | Impact Score
+
+Step 2: Weighted Score Calculation
+Show your math. Justify points in each rubric category.
+
+Step 3: Critical Gap Analysis
+- CRITICAL: Missing knockout criteria (Licenses, Degree, specific Hard Skills)
+- HIGH: Seniority mismatch or missing skills in most recent 2 years
+- MEDIUM: Verbiage issues or lack of quantified achievements
+
+Step 4: Optimization Sprint
+Provide 3-5 rewrites:
+[Category] | BEFORE | AFTER (with bolded keywords) | Rationale
+Do not invent roles or skills. Surface existing experience only.
+
+Step 5: Human Skimmability & The 6-Second Test
+- Top-Third: Are most relevant skills in top 33% of page one?
+- Quantification: Are achievements supported by metrics?
+- Formatting: One specific layout change to improve readability
+
+OUTPUT FORMAT:
+ATS SYSTEMIC FIT ANALYSIS
+Executive Summary
+Total Score: [X/100] | Status: [STRONG / MODERATE / WEAK / NO FIT]
+
+1. Keyword Match Analysis
+[Table]
+
+2. Weighted Score Breakdown
+- Titles/Seniority: [X/30] — [Justification]
+- Hard Skills: [X/40] — [Justification]
+- Years of Experience: [X/20] — [Justification]
+- Education/Certs: [X/10] — [Justification]
+
+3. Gap Analysis
+[Grouped by tier: CRITICAL / HIGH / MEDIUM]
+
+4. Optimization Sprint
+[3-5 Rewrite Examples]
+
+5. Recruiter 6-Second Test
+[One specific formatting/layout change]
+
+6. Final Recommendation
+[2-3 sentences on whether to proceed or pivot]
+
+Tone: Analytical, professional, direct. Flag missing mandatory sections as CRITICAL GAP.`;
+
+const RESUME_REFACTOR_PROMPT = `You are an Executive Resume Architect and Technical Recruiter. Perform a high-impact strategic refactor that maximizes ATS compatibility and human recruiter interest while maintaining 100% factual integrity.
+
+CORE DIRECTIVES:
+- Factual Integrity: Never fabricate roles, dates, or skills
+- Placeholder Logic: Use [Insert Metric] where quantitative data is missing. Never invent numbers
+- Visual Transparency: Bold new keywords added from the JD so the candidate can audit changes
+- Structure: Single-column Markdown only. No tables, columns, or graphics (ATS-safe)
+
+THE 6-STEP REFACTOR PROCESS:
+
+Step 1: Competency Mapping
+Identify the top 3 core competencies most critical to the JD. These are the pillars for the entire rewrite.
+
+Step 2: Value Proposition (3-Sentence Summary)
+1. Professional identity, years of experience, and Top 3 competency alignment
+2. High-level synthesis of most impressive relevant achievement
+3. Unique value-add for this specific organization
+
+Step 3: Experience Refactor (Google XYZ Formula)
+Accomplished [X] as measured by [Y], by doing [Z]
+- Prioritize most recent 10 years
+- For roles older than 10 years: Title | Company | Dates only
+- Incorporate JD keywords in bold only where they logically describe existing work
+
+Step 4: Taxonomy-Aligned Skills Section
+Organize into logical categories mirroring JD terminology for 1:1 ATS alignment.
+
+Step 5: Length & Density Optimization
+Remove fluff ("Responsible for," "Tasked with," "Team player"). Aim for quality 2-page density.
+
+Step 6: Strategic Change Log
+Conclude with the 5 most significant strategic adjustments and rationale relative to the JD.
+
+OUTPUT TEMPLATE:
+[CANDIDATE NAME]
+[Contact Info Placeholder]
+
+PROFESSIONAL SUMMARY
+[3-Sentence Value Proposition]
+
+KEY COMPETENCIES
+[Competency 1] | [Competency 2] | [Competency 3]
+
+PROFESSIONAL EXPERIENCE
+[COMPANY NAME] | [JOB TITLE] | [DATES]
+- [Google XYZ Bullet Point]
+- [Google XYZ Bullet Point]
+
+[...continue for 10 years...]
+
+ADDITIONAL EXPERIENCE
+- [Role] | [Company] | [Dates]
+
+SKILLS & TECHNOLOGIES
+[Category]: [Keyword 1], [Keyword 2], [JD Keyword]
+
+EDUCATION & CERTIFICATIONS
+- [Degree/Cert] | [Institution]
+
+STRATEGIC CHANGE LOG
+1. [Change]: [Rationale]
+2. [Change]: [Rationale]
+3. [Change]: [Rationale]
+4. [Change]: [Rationale]
+5. [Change]: [Rationale]`;
+
+
+// ─── DOCX Generation ──────────────────────────────────────────────────────────
+async function downloadAsDocx() {
+  const text = window.lastGeneratedResume || document.getElementById('generatedResumeBody').textContent;
+  if (!text) return;
+
+  const docxLib = window.docx;
+  if (!docxLib) {
+    alert('Word doc library failed to load. Try hard-refreshing the page (Cmd+Shift+R) and running again.');
+    return;
+  }
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, LevelFormat, HeadingLevel } = docxLib;
+
+  const lines = text.split('\n');
+  const children = [];
+
+  for (const line of lines) {
+    const trimmed = line.trim();
+    if (!trimmed) {
+      children.push(new Paragraph({ children: [new TextRun('')], spacing: { after: 80 } }));
+      continue;
+    }
+
+    // Section headers (ALL CAPS lines)
+    if (trimmed === trimmed.toUpperCase() && trimmed.length > 3 && !trimmed.startsWith('[') && !/^\d/.test(trimmed)) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: trimmed, bold: true, size: 24, color: '1a1814' })],
+        spacing: { before: 240, after: 80 },
+        border: { bottom: { style: 'single', size: 6, color: 'c4963a', space: 1 } }
+      }));
+      continue;
+    }
+
+    // Bullet points
+    if (trimmed.startsWith('- ') || trimmed.startsWith('• ') || trimmed.startsWith('* ')) {
+      const bulletText = trimmed.slice(2);
+      // Bold any **text** markers
+      const runs = parseBoldText(bulletText);
+      children.push(new Paragraph({
+        numbering: { reference: 'bullets', level: 0 },
+        children: runs,
+        spacing: { after: 60 }
+      }));
+      continue;
+    }
+
+    // Numbered items (change log)
+    if (/^\d+\./.test(trimmed)) {
+      const runs = parseBoldText(trimmed);
+      children.push(new Paragraph({
+        numbering: { reference: 'numbers', level: 0 },
+        children: runs,
+        spacing: { after: 60 }
+      }));
+      continue;
+    }
+
+    // Name line (first non-empty line - large and bold)
+    if (children.length === 0 || (children.length <= 2 && trimmed.split(' ').length <= 5)) {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: trimmed, bold: true, size: 36, color: '1a1814' })],
+        alignment: AlignmentType.LEFT,
+        spacing: { after: 80 }
+      }));
+      continue;
+    }
+
+    // Regular paragraph
+    const runs = parseBoldText(trimmed);
+    children.push(new Paragraph({ children: runs, spacing: { after: 80 } }));
+  }
+
+  function parseBoldText(text) {
+    const parts = text.split(/\*\*(.+?)\*\*/g);
+    return parts.map((part, i) =>
+      new TextRun({ text: part, bold: i % 2 === 1, size: 22, font: 'Calibri' })
+    ).filter(r => r._data?.text !== '');
+  }
+
+  const doc = new Document({
+    numbering: {
+      config: [
+        { reference: 'bullets', levels: [{ level: 0, format: LevelFormat.BULLET, text: '•',
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] },
+        { reference: 'numbers', levels: [{ level: 0, format: LevelFormat.DECIMAL, text: '%1.',
+            alignment: AlignmentType.LEFT,
+            style: { paragraph: { indent: { left: 720, hanging: 360 } } } }] }
+      ]
+    },
+    sections: [{
+      properties: {
+        page: {
+          size: { width: 12240, height: 15840 },
+          margin: { top: 1080, right: 1080, bottom: 1080, left: 1080 }
+        }
+      },
+      children
+    }]
+  });
+
+  const blob = await Packer.toBlob(doc);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'tailored-resume.docx';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ─── Init ─────────────────────────────────────────────────────────────────────
+function waitForGoogle(callback, attempts = 0) {
+  if (typeof google !== 'undefined' && google.accounts) {
+    callback();
+  } else if (attempts < 30) {
+    setTimeout(() => waitForGoogle(callback, attempts + 1), 200);
+  } else {
+    console.error('Google Identity Services failed to load. Check your internet connection.');
+  }
+}
+
+window.onload = () => {
+  const s = loadSettings();
+  if (!s.anthropicKey) {
+    openSettings();
+    // Still wait for Google in background so it's ready when settings are saved
+    waitForGoogle(() => { /* ready */ });
+  } else {
+    waitForGoogle(() => initGoogleAuth());
+  }
+};
+</script>
+</body>
+</html>
