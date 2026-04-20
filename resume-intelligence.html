@@ -1302,7 +1302,7 @@ async function forceGenerate() {
 
     log('active', '⟳ Waiting 60s before generation to respect rate limits...');
     await new Promise(r => setTimeout(r, 60000));
-    log('active', '⟳ Generating tailored resume (manual override)...');
+    log('active', '⟳ Generating tailored resume with validation (manual override)...');
     const tailored = await generateResume(jd, bestResume.content, achievements, s.anthropicKey);
     document.getElementById('generatedResumeCard').classList.remove('hidden');
     document.getElementById('generatedResumeBody').textContent = tailored;
@@ -1360,58 +1360,133 @@ ${resumeContent.slice(0, 8000)}`;
 }
 
 async function generateResume(jd, resumeContent, achievements, apiKey) {
-  // Smart filtering: Tier 1 first, then Tier 2, then keyword-match Tier 3
   const jdLower = jd.toLowerCase();
-  const tier1 = achievements.filter(a => a.signal === 'Tier 1');
-  const tier2 = achievements.filter(a => a.signal === 'Tier 2');
-  const tier3 = achievements.filter(a => a.signal === 'Tier 3').filter(a => {
-    const text = `${a.keywords} ${a.capabilities} ${a.domain} ${a.bullet}`.toLowerCase();
-    return text.split(/[,\s]+/).some(kw => kw.length > 4 && jdLower.includes(kw));
+
+  // ── Step 1: Extract org names from resume for matching
+  const resumeOrgs = [];
+  resumeContent.split('\n').forEach(line => {
+    // Match lines that look like org names (short, no bullets, appear before experience bullets)
+    const clean = line.trim();
+    if (clean.length > 2 && clean.length < 60 && !clean.startsWith('-') && !clean.startsWith('•')) {
+      resumeOrgs.push(clean.toLowerCase());
+    }
   });
 
-  const selected = [...tier1, ...tier2, ...tier3].slice(0, 20);
+  // ── Step 2: Match achievements to orgs, then score by JD relevance
+  function orgMatch(ach) {
+    if (!ach.organization) return false;
+    const org = ach.organization.toLowerCase();
+    return resumeOrgs.some(r => r.includes(org.slice(0, 6)) || org.includes(r.slice(0, 6)));
+  }
 
-  const achText = selected.map((a, i) => {
-    const parts = [];
-    if (a.organization) parts.push(`Org: ${a.organization}`);
-    if (a.bullet) parts.push(`Bullet: ${a.bullet}`);
-    if (a.metrics) parts.push(`Metrics: ${a.metrics}`);
-    if (a.action) parts.push(`Action: ${a.action}`);
-    if (a.tools) parts.push(`Tools: ${a.tools}`);
-    if (a.keywords) parts.push(`Keywords: ${a.keywords}`);
-    if (a.signal) parts.push(`Signal: ${a.signal}`);
-    return `[${i + 1}] ${parts.join(' | ')}`;
-  }).join('\n');
+  function jdRelevance(ach) {
+    const text = `${ach.keywords || ''} ${ach.capabilities || ''} ${ach.domain || ''} ${ach.bullet || ''}`.toLowerCase();
+    const jdWords = jdLower.split(/[\s,]+/).filter(w => w.length > 4);
+    return jdWords.filter(w => text.includes(w)).length;
+  }
 
-  // Skills summary from Skills sheet
-  const skillsText = (window.skillsDB || []).slice(0, 60)
-    .map(s => `${s.skill} (${s.category})`).join(', ');
+  // ── Step 3: Sort and group by org, prioritizing Tier 1 > Tier 2 > JD relevance
+  const tierRank = { 'Tier 1': 3, 'Tier 2': 2, 'Tier 3': 1 };
+  const sorted = [...achievements]
+    .filter(a => a.bullet || a.metrics) // only entries with actual content
+    .sort((a, b) => {
+      const tierDiff = (tierRank[b.signal] || 0) - (tierRank[a.signal] || 0);
+      if (tierDiff !== 0) return tierDiff;
+      return jdRelevance(b) - jdRelevance(a);
+    });
+
+  // Group by organization
+  const byOrg = {};
+  sorted.forEach(a => {
+    const org = (a.organization || 'General').trim();
+    if (!byOrg[org]) byOrg[org] = [];
+    if (byOrg[org].length < 6) byOrg[org].push(a); // max 6 per org
+  });
+
+  // ── Step 4: Build structured injection text
+  const achText = Object.entries(byOrg).map(([org, items]) => {
+    const lines = items.map(a => {
+      const parts = [];
+      if (a.signal) parts.push(`[${a.signal}]`);
+      if (a.metrics) parts.push(`METRIC: ${a.metrics}`);
+      if (a.bullet) parts.push(`BULLET: ${a.bullet}`);
+      if (a.action) parts.push(`ACTION: ${a.action}`);
+      return '  • ' + parts.join(' | ');
+    });
+    return `=== ${org} ===\n${lines.join('\n')}`;
+  }).join('\n\n');
+
+  // ── Step 5: JD-aligned skills (top 60, sorted by JD relevance)
+  const allSkills = window.skillsDB || [];
+  const rankedSkills = allSkills
+    .map(s => ({ ...s, score: jdLower.includes(s.skill.toLowerCase()) ? 2 : 1 }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 60);
+  const skillsText = rankedSkills.map(s => `${s.skill} (${s.category})`).join(', ');
 
   const prompt = `${RESUME_REFACTOR_PROMPT}
 
 JOB DESCRIPTION:
 ${jd.slice(0, 2000)}
 
-CANDIDATE'S EXISTING RESUME (factual foundation — do not fabricate anything not present here or in the achievements database):
+CANDIDATE'S EXISTING RESUME (the factual foundation — do not change any job titles, company names, dates, or education):
 ${resumeContent.slice(0, 8000)}
 
-VERIFIED CAREER ACHIEVEMENTS DATABASE (use these exact bullets — prioritize Tier 1, then Tier 2):
+VERIFIED ACHIEVEMENT METRICS BY ORGANIZATION:
+The following are pre-verified metrics and impact statements from the candidate's career database, grouped by employer. Use these to strengthen bullets in the matching role — inject the METRIC data into existing bullets where it fits naturally. Do NOT use metrics from one org in a different org's bullets. Do NOT fabricate any metric not listed here.
+
 ${achText}
 
 VERIFIED SKILLS (use only from this list for the skills section):
 ${skillsText}
 
-CRITICAL RULES:
-1. The existing resume is the SOLE source of truth for: job titles, company names, dates, education, and career structure. Do not change any of these facts.
-2. EDUCATION: You must include the education section exactly as it appears in the resume. Do not omit it.
-3. ALL JOBS: Include every role from the resume. Do not drop any position.
-4. The achievements database is ONLY used to upgrade weak bullet points with stronger phrasing, better metrics, or missing impact data — where the achievement clearly matches the same role/context.
-5. If an achievement from the database does not clearly map to a role already in the resume, do not use it.
-6. Use [Insert Metric] only where the resume itself has an unquantified result and the database has no matching data.
-7. Never invent, assume, or interpolate any fact not present in the resume or database.
-8. If the resume content appears incomplete or truncated, include what you have and note [Resume content truncated - candidate to complete] at the end.`;
+METRIC INJECTION RULES:
+1. For each job in the resume, find matching achievements above by organization name.
+2. For each bullet point, check if a verified METRIC exists that quantifies the same activity. If yes, add the metric to the bullet.
+3. If a BULLET entry is stronger/more specific than the resume bullet for the same activity, replace the resume bullet with the verified one.
+4. Never move a metric from one organization to another.
+5. Never invent numbers or outcomes not present in the achievement database or existing resume.
+6. If no metric exists for a bullet, write it without a metric — do not use [Insert Metric] placeholders.
+7. The resume structure (all jobs, dates, education) must be preserved exactly.`;
 
-  return await callClaude(prompt, apiKey, 3000);
+  let result = await callClaude(prompt, apiKey, 3000);
+
+  // ── Validate required sections are present
+  const required = ['PROFESSIONAL SUMMARY', 'KEY COMPETENCIES', 'PROFESSIONAL EXPERIENCE',
+                    'SKILLS', 'EDUCATION'];
+  const missing = required.filter(s => !result.toUpperCase().includes(s));
+
+  // Check name/contact on first two lines
+  const firstLines = result.trim().split('\n').slice(0, 3).join('\n');
+  const hasContact = firstLines.includes('@') || /\d{3}/.test(firstLines);
+  const hasName = result.trim().split('\n')[0].length < 60 &&
+                  !result.trim().startsWith('PROFESSIONAL') &&
+                  !result.trim().startsWith('#') &&
+                  !result.trim().startsWith('**');
+
+  if (missing.length > 0 || !hasContact || !hasName) {
+    console.warn('Resume validation failed. Missing:', missing, 'hasContact:', hasContact, 'hasName:', hasName);
+
+    // Build a focused retry prompt
+    const retryPrompt = \`The resume you generated is missing required sections or the name/contact header.
+
+MISSING OR INVALID:
+\${missing.length > 0 ? '- Sections missing: ' + missing.join(', ') : ''}
+\${!hasName ? '- First line must be the candidate full name (not a section header or markdown)' : ''}
+\${!hasContact ? '- Second line must be contact info with phone/email' : ''}
+
+Here is the resume you generated:
+\${result}
+
+CANDIDATE NAME AND CONTACT (copy these exactly to the first two lines):
+\${resumeContent.split('\n').slice(0, 5).join('\n')}
+
+Please regenerate the complete resume following the STRICT OUTPUT FORMAT exactly. Start with the candidate's name on line 1, contact info on line 2, then the required sections in order.\`;
+
+    result = await callClaude(retryPrompt, apiKey, 3000);
+  }
+
+  return result;
 }
 
 async function callClaude(prompt, apiKey, maxTokens = 1500) {
@@ -1543,62 +1618,56 @@ Total Score: [X/100] | Status: [STRONG / MODERATE / WEAK / NO FIT]
 
 Tone: Analytical, professional, direct. Flag missing mandatory sections as CRITICAL GAP.`;
 
-const RESUME_REFACTOR_PROMPT = `You are an Executive Resume Architect and Technical Recruiter. Perform a high-impact strategic refactor that maximizes ATS compatibility and human recruiter interest while maintaining 100% factual integrity.
+const RESUME_REFACTOR_PROMPT = `You are an Executive Resume Architect. Your job is to produce a tailored resume that passes ATS screening and impresses human recruiters — nothing else.
 
-CORE DIRECTIVES:
-- Factual Integrity: Never fabricate roles, dates, or skills
-- Placeholder Logic: Use [Insert Metric] where quantitative data is missing. Never invent numbers
-- Visual Transparency: Bold new keywords added from the JD so the candidate can audit changes
-- Structure: Single-column Markdown only. No tables, columns, or graphics (ATS-safe)
+CORE RULES:
+- Never fabricate roles, dates, metrics, or skills not present in the source resume or achievements database
+- Bold JD keywords only where they genuinely describe existing work
+- Single-column plain text only — no tables, columns, graphics, or markdown code fences
 
-THE 6-STEP REFACTOR PROCESS:
+THE REFACTOR PROCESS:
 
-Step 1: Competency Mapping
-Identify the top 3 core competencies most critical to the JD. These are the pillars for the entire rewrite.
+Step 1: Write a 3-sentence PROFESSIONAL SUMMARY
+1. Who the candidate is + years of experience + top 2-3 competencies from the JD
+2. Most impressive relevant quantified achievement
+3. Specific value-add for this organization
 
-Step 2: Value Proposition (3-Sentence Summary)
-1. Professional identity, years of experience, and Top 3 competency alignment
-2. High-level synthesis of most impressive relevant achievement
-3. Unique value-add for this specific organization
+Step 2: Write KEY COMPETENCIES
+Extract exactly 3 competency phrases from the JD that best match the candidate. Pipe-separate them.
 
-Step 3: Experience Refactor (Google XYZ Formula)
-Accomplished [X] as measured by [Y], by doing [Z]
-- Prioritize most recent 10 years
-- For roles older than 10 years: Title | Company | Dates only
-- Incorporate JD keywords in bold only where they logically describe existing work
+Step 3: Refactor PROFESSIONAL EXPERIENCE
+- Use Google XYZ format: Accomplished [X] as measured by [Y], by doing [Z]
+- Inject verified metrics from the achievement database where they match the role
+- Bold JD keywords inline only where they describe real work
+- Include all roles from the source resume
 
-Step 4: Taxonomy-Aligned Skills Section
-Organize into logical categories mirroring JD terminology for 1:1 ATS alignment.
+Step 4: Build SKILLS & TECHNOLOGIES
+Organize into categories mirroring JD taxonomy. Use only verified skills.
 
-Step 5: Length & Density Optimization
-Remove fluff ("Responsible for," "Tasked with," "Team player"). Aim for quality 2-page density.
+Step 5: Copy EDUCATION & CERTIFICATIONS exactly from source resume. Never omit or modify.
 
-STRICT OUTPUT FORMAT — FOLLOW EXACTLY, NO DEVIATIONS:
+STRICT OUTPUT FORMAT — VIOLATIONS WILL CAUSE THE RESUME TO FAIL RENDERING:
 
-RULE 1: Output ONLY the resume. No preamble, no analysis, no change log, no markdown code fences.
-RULE 2: Use ONLY these exact section headers, in ALL CAPS, with no # symbols:
-  PROFESSIONAL SUMMARY
-  KEY COMPETENCIES
-  PROFESSIONAL EXPERIENCE
-  ADDITIONAL EXPERIENCE  (only if present in source resume)
-  SKILLS & TECHNOLOGIES
-  EDUCATION & CERTIFICATIONS
-  VOLUNTEERING  (only if present in source resume)
-RULE 3: Job title lines MUST follow this exact format (bold, pipe-separated):
-  **[JOB TITLE] | [COMPANY NAME] | [DATE RANGE]**
-  Then on the next line: [City, State or Remote]
-RULE 4: Experience bullets MUST start with "- "
-RULE 5: Skills lines MUST follow: Category Label: skill1, skill2, skill3
-RULE 6: Education lines MUST follow: - [Degree] | [Institution] | [Year]
-RULE 7: Do NOT use ## or # markdown headers anywhere.
-RULE 8: Do NOT include any audit trail, change log, or strategic notes.
+RULE 1: The FIRST line must be the candidate's full name. Nothing before it.
+RULE 2: The SECOND line must be the contact information line.
+RULE 3: These sections are REQUIRED in this order: PROFESSIONAL SUMMARY, KEY COMPETENCIES, PROFESSIONAL EXPERIENCE, SKILLS & TECHNOLOGIES, EDUCATION & CERTIFICATIONS
+RULE 4: Section headers must be in ALL CAPS with no # symbols and no markdown formatting.
+RULE 5: Job entries must follow EXACTLY this format — two lines:
+  **[Job Title] | [Company Name] | [Start Date] - [End Date]**
+  [City, State] or Remote
+RULE 6: Every experience bullet must start with "- "
+RULE 7: Every skills line must follow: Category Label: skill1, skill2, skill3
+RULE 8: Every education entry must follow: - [Degree] | [Institution] | [Year]
+RULE 9: Do NOT include any preamble, analysis, change log, audit trail, or strategic notes.
+RULE 10: Do NOT use ## or # markdown headers anywhere in the output.
 
-OUTPUT TEMPLATE:
-[FULL NAME]
-[phone] | [email] | [location] | [LinkedIn]
+OUTPUT TEMPLATE — YOUR RESPONSE MUST MATCH THIS STRUCTURE EXACTLY:
+
+[Full Name]
+[phone] | [email] | [city, state] | LinkedIn
 
 PROFESSIONAL SUMMARY
-[3-sentence value proposition]
+[Sentence 1. Sentence 2. Sentence 3.]
 
 KEY COMPETENCIES
 [Competency 1] | [Competency 2] | [Competency 3]
@@ -1610,11 +1679,17 @@ PROFESSIONAL EXPERIENCE
 - [Bullet]
 - [Bullet]
 
+**[Job Title] | [Company] | [Start] - [End]**
+[City, State or Remote]
+- [Bullet]
+
 SKILLS & TECHNOLOGIES
 [Category]: [skill1], [skill2], [skill3]
+[Category]: [skill1], [skill2]
 
 EDUCATION & CERTIFICATIONS
-- [Degree] | [Institution] | [Year]`;
+- [Degree] | [Institution] | [Year]
+- [Degree] | [Institution] | [Year]`
 
 
 // ─── Download as Word Doc ─────────────────────────────────────────────────────
@@ -1726,6 +1801,20 @@ async function downloadAsDocx() {
     // Education / volunteering: "- Degree | School | Year" (3-pipe or 2-pipe)
     function eduLine(t) {
       const c = stripMd(t).replace(/^[-•*]\s*/, '');
+      // Tab-separated: "Degree\t2013"
+      if (c.includes('\t')) {
+        const tabs = c.split(/\t+/).map(s => s.trim()).filter(Boolean);
+        if (tabs.length >= 2) {
+          const yr = tabs[tabs.length - 1];
+          const deg = tabs[0];
+          return [new Paragraph({ children: [r(deg, { bold: true }), tab(), r(yr)],
+            tabStops: [{ type: TabStopType.RIGHT, position: TEXT_W }], spacing: { before: 100, after: 0 } })];
+        }
+        if (tabs.length === 1) {
+          // Just degree, no year — could be school name following a degree line
+          return [new Paragraph({ children: [r(tabs[0], { italics: true })], spacing: { before: 0, after: 60 } })];
+        }
+      }
       const pipes = c.split('|').map(s => s.trim()).filter(Boolean);
       if (pipes.length >= 3) {
         const deg = pipes[0], school = pipes[1], yr = pipes[pipes.length - 1];
@@ -1776,20 +1865,41 @@ async function downloadAsDocx() {
     // Org line: "Company | Date | Location" — has pipes, has a date, no ** required
     function parseOrgLine(line) {
       const clean = stripMd(line);
+      // Tab-separated: "Company\tDates" or "Company\tDates\tLocation"
+      if (clean.includes('\t')) {
+        const tabs = clean.split(/\t+/).map(s => s.trim()).filter(Boolean);
+        if (tabs.length >= 2) {
+          const last = tabs[tabs.length - 1];
+          if (DATE_RE.test(last)) {
+            return { org: tabs[0], dates: last, loc: tabs.length > 2 ? tabs[1] : '' };
+          }
+          // "Company\tDates" where date is in middle
+          const dateIdx = tabs.findIndex(t => DATE_RE.test(t));
+          if (dateIdx > 0) {
+            return { org: tabs[0], dates: tabs[dateIdx], loc: '' };
+          }
+        }
+      }
+      // Pipe-separated: "Company | Dates | Location"
       const pipes = clean.split('|').map(s => s.trim()).filter(Boolean);
       if (pipes.length >= 2) {
-        // Find which part has the date
         const dateIdx = pipes.findIndex(p => DATE_RE.test(p));
         if (dateIdx > -1) {
           const org = pipes[0];
-          // Dates: join date-containing parts
           const datePart = pipes.slice(1).filter(p => DATE_RE.test(p)).join(' — ');
-          // Location: last non-date pipe if available
           const locPart = pipes.slice(1).find(p => !DATE_RE.test(p)) || '';
           return { org, dates: datePart, loc: locPart };
         }
       }
       return null;
+    }
+
+    // Is this a title-only line? (short, no date, trailing tab, not a bullet)
+    function isTitleLine(line, clean) {
+      // "Senior Program Manager, North America\t" — trailing tab, no date
+      if (line.includes('\t') && !DATE_RE.test(clean) && !isBullet(line) && clean.length < 80) return true;
+      // Plain short line with no date — handled as pendingTitle elsewhere
+      return false;
     }
 
     // Old-style bold job title: **Company | Title | Dates**
@@ -1800,14 +1910,16 @@ async function downloadAsDocx() {
       if (pipes.length >= 2) {
         const last = pipes[pipes.length - 1];
         if (DATE_RE.test(last)) {
-          if (pipes.length >= 3) return { org: pipes[0], title: pipes[1], dates: last };
-          if (pipes.length === 2) return { org: null, title: pipes[0], dates: last };
+          // New format: **Title | Company | Dates** — title first, org second
+          if (pipes.length >= 3) return { title: pipes[0], org: pipes[1], dates: last };
+          // Simple: **Title | Dates**
+          if (pipes.length === 2) return { title: pipes[0], org: null, dates: last };
         }
       }
       const tabs = c.split(/\t+/);
       if (tabs.length >= 2) {
         const last = tabs[tabs.length - 1].trim();
-        if (DATE_RE.test(last) && c.length < 120) return { org: null, title: tabs[0].trim(), dates: last };
+        if (DATE_RE.test(last) && c.length < 120) return { title: tabs[0].trim(), org: null, dates: last };
       }
       return null;
     }
@@ -1821,16 +1933,25 @@ async function downloadAsDocx() {
     let pendingTitle = null; // holds title line waiting for org line
     let i = 0;
 
-    // Skip everything before the name line (# NAME or ---separator)
+    // Skip preamble before actual resume content
+    // Stop at: # NAME, **NAME**, plain name line, ---, or known section header
     while (i < rawLines.length) {
       const line = rawLines[i].trim();
-      // Name line: # NAME or **NAME** at top level
+      // Explicit markdown name
       if (/^#\s+[A-Z]/.test(line) || (/^\*\*[A-Z]/.test(line) && !line.includes('##'))) {
-        nameFound = true;
-        break;
+        nameFound = true; break;
       }
-      // Also stop at --- if we've seen a competency mapping section (i.e. preamble)
+      // Horizontal rule separator after preamble
       if (line === '---' && i > 0) { i++; break; }
+      // Resume starts directly with known section header (AI omitted name/contact)
+      if (isSec(line)) { nameFound = true; break; }
+      // Plain name line: short, no special chars, followed by contact line
+      const nextLine = rawLines[i + 1] ? rawLines[i + 1].trim() : '';
+      const looksLikeName = line.length > 3 && line.length < 50 &&
+        !line.includes('|') && !line.includes('@') && !line.includes(':') &&
+        !/\d/.test(line) && !/^[#*-]/.test(line) && !isSec(line);
+      const nextIsContact = nextLine.includes('@') || /\d{3}/.test(nextLine) || nextLine.includes('|');
+      if (looksLikeName && nextIsContact) { nameFound = true; break; }
       i++;
     }
 
@@ -1893,13 +2014,22 @@ async function downloadAsDocx() {
         const orgLine = parseOrgLine(line);
         if (orgLine) {
           if (pendingTitle) {
-            // This is the org/dates line following a plain title
+            // Plain title line came first, now we have org/dates
             children.push(titlePara(pendingTitle, orgLine.dates));
             children.push(orgPara(orgLine.org, orgLine.loc));
             pendingTitle = null;
           } else {
-            // Standalone org line with no preceding title
-            children.push(orgPara(orgLine.org, orgLine.loc));
+            // Company\tDates format — peek ahead for Title\t line
+            const nextRaw = rawLines[i + 1] || '';
+            const nextClean = stripHeader(stripMd(nextRaw.trim()));
+            if (nextRaw.includes('\t') && !DATE_RE.test(nextClean) && nextClean.length > 0 && nextClean.length < 80 && !isBullet(nextRaw.trim())) {
+              i++;
+              children.push(titlePara(nextClean, orgLine.dates));
+              children.push(orgPara(orgLine.org, orgLine.loc));
+            } else {
+              children.push(titlePara(orgLine.org, orgLine.dates));
+              if (orgLine.loc) children.push(orgPara('', orgLine.loc));
+            }
           }
           i++; continue;
         }
@@ -1911,8 +2041,20 @@ async function downloadAsDocx() {
           i++; continue;
         }
 
+        // Tab-trailing title line: "Senior Program Manager, North America\t"
+        if (isTitleLine(line, clean)) {
+          // This is a title — store as pending, next line may be org or bullets
+          if (pendingTitle) {
+            // Previous pending was the org, this is the title — swap
+            children.push(titlePara(clean, ''));
+          } else {
+            pendingTitle = clean;
+          }
+          i++; continue;
+        }
+
         // Short non-bullet line = job title (new format: title on its own line)
-        if (clean.length < 60 && !isBullet(line)) {
+        if (clean.length < 80 && !isBullet(line)) {
           pendingTitle = clean;
           i++; continue;
         }
