@@ -1848,8 +1848,8 @@ async function downloadAsDocx() {
         i++; continue;
       }
 
-      if (!contactSet && nameFound && children.length === 1) {
-        // First non-empty line after name = contact
+      if (!contactSet && nameFound && !currentSection && (clean.includes('@') || /\d{3}/.test(clean))) {
+        // Contact line: has @ or phone, before any section header
         const contactText = clean.replace(/\s*◇\s*/g, ' | ').replace(/  +/g, ' ');
         const parts = contactText.split(/(LinkedIn)/i);
         const runs = parts.map(p =>
@@ -1932,9 +1932,15 @@ async function downloadAsDocx() {
         i++; continue;
       }
 
-      // ── Skills
+      // ── Skills / Competencies
       if (currentSection.includes('SKILL') || currentSection.includes('COMPETENC')) {
-        children.push(skillLine(line)); i++; continue;
+        if (currentSection === 'KEY COMPETENCIES' && !line.startsWith('-')) {
+          // Pipe-separated competencies line — render as plain body text
+          children.push(new Paragraph({ children: parseRuns(clean), spacing: { before: 60, after: 60 } }));
+        } else {
+          children.push(skillLine(line));
+        }
+        i++; continue;
       }
 
       // ── Education / Volunteering
