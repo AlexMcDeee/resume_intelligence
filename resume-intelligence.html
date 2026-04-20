@@ -1467,21 +1467,17 @@ METRIC INJECTION RULES:
   if (missing.length > 0 || !hasContact || !hasName) {
     console.warn('Resume validation failed. Missing:', missing, 'hasContact:', hasContact, 'hasName:', hasName);
 
-    // Build a focused retry prompt
-    const retryPrompt = \`The resume you generated is missing required sections or the name/contact header.
-
-MISSING OR INVALID:
-\${missing.length > 0 ? '- Sections missing: ' + missing.join(', ') : ''}
-\${!hasName ? '- First line must be the candidate full name (not a section header or markdown)' : ''}
-\${!hasContact ? '- Second line must be contact info with phone/email' : ''}
-
-Here is the resume you generated:
-\${result}
-
-CANDIDATE NAME AND CONTACT (copy these exactly to the first two lines):
-\${resumeContent.split('\n').slice(0, 5).join('\n')}
-
-Please regenerate the complete resume following the STRICT OUTPUT FORMAT exactly. Start with the candidate's name on line 1, contact info on line 2, then the required sections in order.\`;
+    // Build a focused retry prompt using string concatenation
+    const missingList = missing.length > 0 ? '- Sections missing: ' + missing.join(', ') : '';
+    const nameNote = !hasName ? '- First line must be the candidate full name (not a section header or markdown)' : '';
+    const contactNote = !hasContact ? '- Second line must be contact info with phone/email' : '';
+    const sourceHeader = resumeContent.split('\n').slice(0, 5).join('\n');
+    const retryPrompt = 'The resume you generated is missing required sections or the name/contact header.\n\n' +
+      'MISSING OR INVALID:\n' + [missingList, nameNote, contactNote].filter(Boolean).join('\n') + '\n\n' +
+      'Here is what you generated:\n' + result + '\n\n' +
+      'CANDIDATE NAME AND CONTACT (copy these exactly as the first two lines):\n' + sourceHeader + '\n\n' +
+      'Please regenerate the complete resume following the STRICT OUTPUT FORMAT exactly. ' +
+      'Start with the candidate name on line 1, contact info on line 2, then all required sections.';
 
     result = await callClaude(retryPrompt, apiKey, 3000);
   }
