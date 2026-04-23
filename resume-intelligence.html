@@ -1081,40 +1081,38 @@ function jobKey(jd) {
   return 'job_' + jd.trim().slice(0, 200).replace(/\s+/g, ' ').split('').reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0);
 }
 
-async function loadTrackedJobs() {
+function loadTrackedJobs() {
   try {
-    const result = await window.storage.get('tracked_jobs');
-    return result ? JSON.parse(result.value) : [];
+    const raw = localStorage.getItem('ris_tracked_jobs');
+    return raw ? JSON.parse(raw) : [];
   } catch { return []; }
 }
 
-async function saveTrackedJob(entry) {
+function saveTrackedJob(entry) {
   try {
-    const jobs = await loadTrackedJobs();
-    // Check for duplicate by key
+    const jobs = loadTrackedJobs();
     const idx = jobs.findIndex(j => j.key === entry.key);
     if (idx > -1) jobs[idx] = entry;
     else jobs.unshift(entry);
-    // Keep last 100
-    await window.storage.set('tracked_jobs', JSON.stringify(jobs.slice(0, 100)));
+    localStorage.setItem('ris_tracked_jobs', JSON.stringify(jobs.slice(0, 100)));
   } catch (e) { console.error('Tracker save failed:', e); }
 }
 
-async function checkDuplicate(jd) {
+function checkDuplicate(jd) {
   const key = jobKey(jd);
-  const jobs = await loadTrackedJobs();
+  const jobs = loadTrackedJobs();
   return jobs.find(j => j.key === key) || null;
 }
 
 function renderJobTracker() {
   const panel = document.getElementById('jobTrackerPanel');
   if (!panel) return;
-  loadTrackedJobs().then(jobs => {
-    if (jobs.length === 0) {
-      panel.innerHTML = '<div class="tracker-empty">No jobs tracked yet. Run an evaluation to start.</div>';
-      return;
-    }
-    panel.innerHTML = jobs.map(j => `
+  const jobs = loadTrackedJobs();
+  if (jobs.length === 0) {
+    panel.innerHTML = '<div class="tracker-empty">No jobs tracked yet. Run an evaluation to start.</div>';
+    return;
+  }
+  panel.innerHTML = jobs.map(j => `
       <div class="tracker-row tier-${j.tier}">
         <div class="tracker-meta">
           <span class="tracker-title">${j.title || 'Unknown Role'}</span>
@@ -1129,21 +1127,20 @@ function renderJobTracker() {
         </div>
       </div>
     `).join('');
-  });
 }
 
-async function clearTracker() {
+function clearTracker() {
   if (!confirm('Clear all tracked jobs?')) return;
   try {
-    await window.storage.set('tracked_jobs', JSON.stringify([]));
+    localStorage.setItem('ris_tracked_jobs', JSON.stringify([]));
     renderJobTracker();
   } catch (e) { console.error(e); }
 }
 
-async function markApplied(key, applied) {
-  const jobs = await loadTrackedJobs();
+function markApplied(key, applied) {
+  const jobs = loadTrackedJobs();
   const job = jobs.find(j => j.key === key);
-  if (job) { job.applied = applied; await window.storage.set('tracked_jobs', JSON.stringify(jobs)); }
+  if (job) { job.applied = applied; localStorage.setItem('ris_tracked_jobs', JSON.stringify(jobs)); }
 }
 
 // ─── Main Pipeline ────────────────────────────────────────────────────────────
@@ -1158,7 +1155,7 @@ async function runPipeline() {
   if (!s.anthropicKey) { openSettings(); return; }
 
   // ── Duplicate check
-  const existing = await checkDuplicate(jd);
+  const existing = checkDuplicate(jd);
   if (existing) {
     const again = confirm(`You've already run this job on ${existing.date} (score: ${existing.score}/100). Run again?`);
     if (!again) return;
@@ -1261,7 +1258,7 @@ async function runPipeline() {
 
     // Save to job tracker
     const tier = atsScore >= 70 ? 'A' : atsScore >= 50 ? 'B' : 'C';
-    await saveTrackedJob({
+    saveTrackedJob({
       key: jobKey(jd),
       title: jobTitle,
       score: atsScore,
@@ -1284,34 +1281,45 @@ async function runPipeline() {
 // Force generate for Tier B jobs
 async function forceGenerate() {
   const jd = document.getElementById('jobDesc').value.trim();
-  const selected = driveFiles.filter(f => f.selected);
   const s = loadSettings();
   const btn = document.getElementById('forceGenBtn');
   if (btn) { btn.disabled = true; btn.textContent = '⟳ Generating...'; }
 
   try {
+    // Reuse already-loaded resume content from the pipeline run
+    // Best resume was already identified — find it from driveFiles + loaded content
+    const selected = driveFiles.filter(f => f.selected);
+    if (selected.length === 0) { alert('No resume selected.'); return; }
+    if (achievements.length === 0) { alert('No achievements loaded.'); return; }
+
+    log('active', '⟳ Fetching resume for manual generation...');
     const loaded = [];
     for (const f of selected) {
-      try { loaded.push({ name: f.name, content: await fetchFileContent(f.id, f.mimeType) }); } catch {}
+      try {
+        const c = await fetchFileContent(f.id, f.mimeType);
+        loaded.push({ name: f.name, content: c });
+      } catch (e) {
+        log('error', '  ✗ Could not read ' + f.name + ': ' + e.message);
+      }
     }
-    if (loaded.length === 0) { alert('Could not load resume files.'); return; }
+    if (loaded.length === 0) { alert('Could not load any resume files. Check your Drive connection.'); return; }
 
-    const quickScores = await quickScoreAll(jd, loaded, s.anthropicKey);
-    quickScores.sort((a, b) => b.score - a.score);
-    const bestResume = loaded.find(r => r.name === quickScores[0].name);
-
-    log('active', '⟳ Waiting 60s before generation to respect rate limits...');
-    await new Promise(r => setTimeout(r, 60000));
-    log('active', '⟳ Generating tailored resume with validation (manual override)...');
+    // Use highest-scored resume if multiple, otherwise use first
+    const bestResume = loaded[0];
+    log('active', '⟳ Generating tailored resume (manual override)...');
     const tailored = await generateResume(jd, bestResume.content, achievements, s.anthropicKey);
+
     document.getElementById('generatedResumeCard').classList.remove('hidden');
     document.getElementById('generatedResumeBody').textContent = tailored;
     window.lastGeneratedResume = tailored;
-    log('done', '✓ Resume generation complete (manual override). Scroll down to download.');
+    log('done', '✓ Resume generation complete. Scroll down to download.');
+
   } catch (e) {
-    log('error', '✗ Error: ' + e.message);
+    log('error', '✗ Generation failed: ' + e.message);
+    console.error('forceGenerate error:', e);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Resume Anyway'; }
   }
-  if (btn) { btn.disabled = false; btn.textContent = '⚡ Generate Resume Anyway'; }
 }
 
 function copyGapAnalysis() {
@@ -1440,14 +1448,15 @@ ${achText}
 VERIFIED SKILLS (use only from this list for the skills section):
 ${skillsText}
 
-METRIC INJECTION RULES:
-1. For each job in the resume, find matching achievements above by organization name.
-2. For each bullet point, check if a verified METRIC exists that quantifies the same activity. If yes, add the metric to the bullet.
-3. If a BULLET entry is stronger/more specific than the resume bullet for the same activity, replace the resume bullet with the verified one.
-4. Never move a metric from one organization to another.
-5. Never invent numbers or outcomes not present in the achievement database or existing resume.
-6. If no metric exists for a bullet, write it without a metric — do not use [Insert Metric] placeholders.
-7. The resume structure (all jobs, dates, education) must be preserved exactly.`;
+HARD CONSTRAINTS ON CONTENT — NO EXCEPTIONS:
+1. Every bullet must describe work that actually appears in the source resume or achievement database above. If it is not in those two sources, do not write it.
+2. Every skill in the skills section must appear in the VERIFIED SKILLS list above. Do not add skills from the JD that are not in that list.
+3. The summary may only reference achievements that exist in the source resume or achievement database.
+4. Job titles, company names, dates, and education must be copied exactly from the source resume — never modified.
+5. Do not use the hiring company's name in the summary or bullets unless the candidate worked there.
+6. Metrics may only be used if they appear in the source resume or VERIFIED ACHIEVEMENT METRICS above.
+7. If a JD requirement has no honest match in the candidate's background, do not address it — leave it out.
+8. "Reframing" means finding the best truthful angle on real experience. It never means inventing experience.`;
 
   let result = await callClaude(prompt, apiKey, 3000);
 
@@ -1455,6 +1464,21 @@ METRIC INJECTION RULES:
   const required = ['PROFESSIONAL SUMMARY', 'KEY COMPETENCIES', 'PROFESSIONAL EXPERIENCE',
                     'SKILLS', 'EDUCATION'];
   const missing = required.filter(s => !result.toUpperCase().includes(s));
+
+  // ── Flag obvious hallucinations (hiring company name injected into bullets)
+  // Extract company names from JD (first 500 chars usually has the company name)
+  const jdCompanyMatch = jd.slice(0, 500).match(/^([A-Z][a-zA-Z]+(?:'s)?)/m);
+  if (jdCompanyMatch) {
+    const hiringCo = jdCompanyMatch[1].toLowerCase();
+    // Check if hiring company appears in bullets but not in source resume
+    const inResume = resumeContent.toLowerCase().includes(hiringCo);
+    const inResult = result.toLowerCase().includes(hiringCo);
+    if (!inResume && inResult) {
+      console.warn('Possible hallucination: hiring company name', jdCompanyMatch[1], 'appeared in output but not in source resume');
+      // Strip the company name from the summary specifically
+      result = result.replace(new RegExp(jdCompanyMatch[1] + "[''']?s?\\s+(global\\s+scale|scale|needs|mission|vision|goals)", 'gi'), 'this organization');
+    }
+  }
 
   // Check name/contact on first two lines
   const firstLines = result.trim().split('\n').slice(0, 3).join('\n');
@@ -1614,84 +1638,96 @@ Total Score: [X/100] | Status: [STRONG / MODERATE / WEAK / NO FIT]
 
 Tone: Analytical, professional, direct. Flag missing mandatory sections as CRITICAL GAP.`;
 
-const RESUME_REFACTOR_PROMPT = `You are an Executive Resume Architect. Your job is to produce a tailored resume that passes ATS screening and impresses human recruiters — nothing else.
+const RESUME_REFACTOR_PROMPT = `You are a senior executive resume writer and career strategist. Your task is to produce a polished, tailored resume that positions the candidate as the ideal person for this specific role — not just a keyword match.
 
-CORE RULES:
-- Never fabricate roles, dates, metrics, or skills not present in the source resume or achievements database
-- Bold JD keywords only where they genuinely describe existing work
-- Single-column plain text only — no tables, columns, graphics, or markdown code fences
+ABSOLUTE CONSTRAINTS — THESE OVERRIDE ALL OTHER INSTRUCTIONS:
+1. NEVER invent, fabricate, or imply experience the candidate does not have. Every bullet must describe work that actually appears in the source resume or verified achievement database.
+2. NEVER add skills, industries, domains, or capabilities not present in the source resume or skills database — even if the JD asks for them.
+3. NEVER use the hiring company's name in the summary or bullets unless the candidate actually worked there.
+4. Strategic reframing means finding the best honest angle on real experience — not inventing new experience to match the JD.
+5. If the candidate lacks a specific JD requirement, omit it silently. Do not fabricate a substitute.
 
-THE REFACTOR PROCESS:
+YOUR APPROACH — think like a strategic advisor, not a template filler:
 
-Step 1: Write a 3-sentence PROFESSIONAL SUMMARY
-1. Who the candidate is + years of experience + top 2-3 competencies from the JD
-2. Most impressive relevant quantified achievement
-3. Specific value-add for this organization
+STEP 1: READ THE JD STRATEGICALLY
+Before writing anything, identify:
+- What is the core identity of this role? (e.g. "enterprise strategist" vs "program manager" vs "technical lead")
+- What are the 2-3 most critical capabilities being hired for?
+- What language does the hiring organization use to describe excellence in this role?
+- What is the implicit seniority signal — what does success at this level look like?
 
-Step 2: Write KEY COMPETENCIES
-Extract exactly 3 competency phrases from the JD that best match the candidate. Pipe-separate them.
+STEP 2: DEFINE THE CANDIDATE'S POSITIONING
+Determine the single most compelling frame for this candidate given the JD. Ask:
+- What is the strongest possible professional identity statement given their background and this role?
+- What is their most impressive relevant achievement — the one that makes a hiring manager stop scrolling?
+- What makes them distinctively qualified vs. a generic applicant?
+Write a 3-sentence summary that leads with identity, anchors with impact, and ends with specific value-add for this organization.
 
-Step 3: Refactor PROFESSIONAL EXPERIENCE
-Write strong, natural-sounding bullets. Use the Google XYZ formula ONLY when all three elements genuinely exist: a clear outcome (X), a real metric or evidence (Y), and a specific action (Z). Do NOT force the formula — if a bullet lacks a genuine metric, write it as a direct strong action statement instead.
+STEP 3: REFRAME EXPERIENCE STRATEGICALLY
+For each role, rewrite bullets so they reflect the level and type of work the JD is hiring for. If the JD wants an enterprise strategist, bullets should read like enterprise strategy work — not operational execution. If the JD wants a technical builder, bullets should read like technical depth. Specifically:
+- Lead with the most strategically relevant bullet for each role
+- Use the hiring organization's vocabulary naturally — not bolded keyword-stuffing
+- Write bullets that sound like a senior professional describing their work, not a template
+- Include metrics only where they genuinely exist and strengthen the point
+- Never use "as measured by" unless there is a real number or concrete outcome following it
+- Never start consecutive bullets with the same verb
+- Aim for varied sentence structures — mix long strategic bullets with shorter punchy ones
 
-Good bullet (XYZ applies): "Negotiated first-of-its-kind enterprise MOU with Costco, delivering 265% revenue growth (2023-2025) through strategic supplier alignment"
-Bad bullet (forced XYZ): "Accomplished initiative as measured by embedded tools and structured onboarding" — this is grammatically broken and must never appear.
+STEP 4: WRITE LIKE A PERSON
+The single most important quality standard: every bullet must read as if a smart, senior professional wrote it to describe real work. Ask yourself for each bullet: "Would a VP at a Fortune 500 company actually say this?" If the answer is no, rewrite it.
 
-Rules:
-- Start every bullet with a strong past-tense action verb (Negotiated, Designed, Led, Secured, Built, etc.)
-- Include a metric only if one genuinely exists in the resume or achievement database
-- Never use "as measured by" unless there is an actual number or concrete evidence to put after it
-- Bold JD keywords inline only where they describe real work
-- Include all roles from the source resume
+Bad: "Accomplished enterprise sustainability strategy as measured by Fortune 50 retailer alignment"
+Bad: "Leveraged analytics to execute stakeholder engagement processes across cross-functional teams"
+Good: "Served as sustainability strategy advisor to Target enterprise leadership, preparing board-ready materials on responsible sourcing risk and ESG governance adopted company-wide"
+Good: "Negotiated first-of-its-kind enterprise partnership with Costco delivering 265% revenue growth by aligning sourcing expansion with supplier participation models"
 
-Step 4: Build SKILLS & TECHNOLOGIES
-Organize into categories mirroring JD taxonomy. Use only verified skills.
+STEP 5: BUILD THE SKILLS SECTION
+Organize into 4-6 categories that mirror the JD's domain language. Put the most JD-relevant category first. Use only verified skills from the candidate's background.
 
-Step 5: Copy EDUCATION & CERTIFICATIONS exactly from source resume. Never omit or modify.
+STRICT OUTPUT FORMAT — VIOLATIONS WILL BREAK THE DOCUMENT RENDERER:
 
-STRICT OUTPUT FORMAT — VIOLATIONS WILL CAUSE THE RESUME TO FAIL RENDERING:
+RULE 1: First line = candidate full name only. No title, no markdown, nothing else.
+RULE 2: Second line = contact info with | separators.
+RULE 3: Required sections in this order: PROFESSIONAL SUMMARY, KEY COMPETENCIES, PROFESSIONAL EXPERIENCE, SKILLS & TECHNOLOGIES, EDUCATION & CERTIFICATIONS
+RULE 4: Section headers in ALL CAPS, no # symbols, no markdown.
+RULE 5: Job entries — exactly two lines before bullets:
+  Line 1: **[Job Title] | [Company Name] | [Start Date] - [End Date]**
+  Line 2: [City, State] or Remote
+RULE 6: Every bullet starts with "- "
+RULE 7: Skills lines: Category Label: skill1, skill2, skill3
+RULE 8: Education lines: - [Degree] | [Institution] | [Year]
+RULE 9: No preamble, no analysis, no change log, no audit trail, no markdown code fences.
+RULE 10: No ## or # headers anywhere.
 
-RULE 1: The FIRST line must be the candidate's full name. Nothing before it.
-RULE 2: The SECOND line must be the contact information line.
-RULE 3: These sections are REQUIRED in this order: PROFESSIONAL SUMMARY, KEY COMPETENCIES, PROFESSIONAL EXPERIENCE, SKILLS & TECHNOLOGIES, EDUCATION & CERTIFICATIONS
-RULE 4: Section headers must be in ALL CAPS with no # symbols and no markdown formatting.
-RULE 5: Job entries must follow EXACTLY this format — two lines:
-  **[Job Title] | [Company Name] | [Start Date] - [End Date]**
-  [City, State] or Remote
-RULE 6: Every experience bullet must start with "- "
-RULE 7: Every skills line must follow: Category Label: skill1, skill2, skill3
-RULE 8: Every education entry must follow: - [Degree] | [Institution] | [Year]
-RULE 9: Do NOT include any preamble, analysis, change log, audit trail, or strategic notes.
-RULE 10: Do NOT use ## or # markdown headers anywhere in the output.
-
-OUTPUT TEMPLATE — YOUR RESPONSE MUST MATCH THIS STRUCTURE EXACTLY:
+OUTPUT TEMPLATE:
 
 [Full Name]
 [phone] | [email] | [city, state] | LinkedIn
 
 PROFESSIONAL SUMMARY
-[Sentence 1. Sentence 2. Sentence 3.]
+[3 sentences: identity + years + top competencies. Best relevant achievement with metric. Specific value-add for this organization.]
 
 KEY COMPETENCIES
 [Competency 1] | [Competency 2] | [Competency 3]
 
 PROFESSIONAL EXPERIENCE
 
-**[Job Title] | [Company] | [Start] - [End]**
+**[Job Title] | [Company Name] | [Start] - [End]**
 [City, State or Remote]
+- [Bullet — strongest and most JD-relevant first]
 - [Bullet]
 - [Bullet]
 
-**[Job Title] | [Company] | [Start] - [End]**
+**[Job Title] | [Company Name] | [Start] - [End]**
 [City, State or Remote]
+- [Bullet]
 - [Bullet]
 
 SKILLS & TECHNOLOGIES
-[Category]: [skill1], [skill2], [skill3]
+[Most JD-relevant category]: [skill1], [skill2], [skill3]
 [Category]: [skill1], [skill2]
 
 EDUCATION & CERTIFICATIONS
-- [Degree] | [Institution] | [Year]
 - [Degree] | [Institution] | [Year]`
 
 
